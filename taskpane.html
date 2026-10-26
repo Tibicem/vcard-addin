@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Firma GERES</title>
+<!-- office.js no publica hash estable: SRI romperia el add-in en cada actualizacion de Microsoft -->
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+  :root{--azul:#2563eb;--tinta:#0c1429;--gris:#5b6b82;--linea:#e2e8f2}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#fff;color:var(--tinta);padding:14px;font-size:14px}
+  .cab{display:flex;align-items:center;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--linea);margin-bottom:14px}
+  .cab img{height:26px}
+  .cab b{font-size:14px}
+  h2{font-size:13px;font-weight:700;color:var(--gris);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
+  .caja{border:1px solid var(--linea);border-radius:6px;padding:16px;margin-bottom:14px;min-height:56px;overflow:auto;max-height:300px}
+  .vacio{color:var(--gris);font-size:13px;line-height:1.6}
+  button{width:100%;background:var(--azul);color:#fff;border:0;padding:11px 14px;font-size:14px;font-weight:700;border-radius:5px;cursor:pointer;font-family:inherit}
+  button:disabled{background:#c7d0dd;cursor:default}
+  button:hover:not(:disabled){background:#1d4ed8}
+  button.hecho{background:#15803d}
+  .pie{margin-top:10px;font-size:11px;color:#98a4b6;line-height:1.6;text-align:center}
+  input{width:100%;padding:10px 12px;font-size:13px;border:1px solid var(--linea);border-radius:5px;font-family:inherit}
+  .error{color:#b91c1c;font-size:13px;line-height:1.6}
+</style>
+</head>
+<body>
+
+<div class="cab"><img src="https://geresgestion.com/logo-blanco.png" alt="GERES" style="filter:invert(1)"><b>Firma corporativa</b></div>
+
+<div id="alta" style="display:none">
+  <h2>Activa tu firma</h2>
+  <div class="vacio" style="margin-bottom:12px">Pega el enlace de tu tarjeta. Se guarda en este equipo y no tendrás que volver a hacerlo.</div>
+  <input id="in" type="text" placeholder="https://vcard.geresgestion.com/c/…" autocomplete="off">
+  <button id="btnAlta" style="margin-top:10px" onclick="guardar()">Guardar enlace</button>
+  <div class="pie" id="pieAlta"></div>
+</div>
+
+<div id="principal" style="display:none">
+  <h2>Tu firma</h2>
+  <div class="caja" id="preview"></div>
+  <button id="btn" disabled onclick="insertar()">Insertar firma</button>
+  <div class="pie" id="pie">Se inserta al final del mensaje. Puedes editar después.</div>
+  <div class="pie" style="margin-top:8px"><a href="#" onclick="olvidar();return false" style="color:#98a4b6">Usar otro enlace</a></div>
+</div>
+
+<script>
+var API = "https://vcard.geresgestion.com/api/addin/signature";
+var KEY = "vcard_token";
+var firmaHTML = "";
+
+function tokenDe(texto){
+  texto = (texto || "").trim();
+  var m = texto.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return m ? m[0] : "";
+}
+
+function olvidar(){
+  localStorage.removeItem(KEY);
+  mostrar(false);
+}
+
+function mostrar(hayToken){
+  document.getElementById("alta").style.display = hayToken ? "none" : "block";
+  document.getElementById("principal").style.display = hayToken ? "block" : "none";
+}
+
+function guardar(){
+  var t = tokenDe(document.getElementById("in").value);
+  if (!t) { document.getElementById("pieAlta").textContent = "No encuentro un enlace válido."; return; }
+  localStorage.setItem(KEY, t);
+  mostrar(true);
+  cargar(t);
+}
+
+Office.onReady(function () {
+  var t = localStorage.getItem(KEY);
+  if (t) { mostrar(true); cargar(t); } else { mostrar(false); }
+});
+
+function cargar(token){
+  document.getElementById("preview").innerHTML = '<div class="vacio">Cargando…</div>';
+  fetch(API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: token })
+  })
+  .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+  .then(function (d) {
+    firmaHTML = d.html;
+    // ponytail: HTML propio, generado por signature_service con todos los campos escapados.
+    document.getElementById("preview").innerHTML = d.html;
+    document.getElementById("btn").disabled = false;
+    document.getElementById("pie").textContent = d.name + " · " + (d.company || "");
+  })
+  .catch(function (e) {
+    firmaHTML = "";
+    document.getElementById("btn").disabled = true;
+    document.getElementById("preview").innerHTML = '<div class="error">' +
+      (e && e.message === "404" ? "Ese enlace no corresponde a ninguna tarjeta activa." : "No se pudo cargar la firma.") + '</div>';
+  });
+}
+
+function insertar() {
+  if (!firmaHTML) return;
+  var item = Office.context.mailbox.item;
+  var boton = document.getElementById("btn");
+
+  var hecho = function (res) {
+    if (res.status === Office.AsyncResultStatus.Succeeded) {
+      boton.textContent = "✓ Firma insertada";
+      boton.classList.add("hecho");
+      setTimeout(function () { boton.textContent = "Insertar firma"; boton.classList.remove("hecho"); }, 3000);
+    } else {
+      document.getElementById("pie").textContent = "No se pudo insertar: " + (res.error && res.error.message || "");
+    }
+  };
+
+  if (item.body.setSignatureAsync) {
+    item.body.setSignatureAsync(firmaHTML, { coercionType: Office.CoercionType.Html }, hecho);
+  } else {
+    item.body.setAsync(firmaHTML, { coercionType: Office.CoercionType.Html, setAsSignature: true }, hecho);
+  }
+}
+</script>
+</body>
+</html>
